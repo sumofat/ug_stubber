@@ -1,6 +1,7 @@
 package main 
 import fmt "core:fmt"
 import utf8 "core:unicode/utf8"
+import strings "core:strings"
 
 TokenType :: enum{
 	Identifier,
@@ -212,7 +213,7 @@ parse_gl_header :: proc(input : string){
                 is_function = true;
                 append(&block.tokens,token)
                 for{
-                	token = get_token(token)
+                	token = get_token(tokenizer)
                 	append(&block.tokens,token)
                 	is_function = false
 					if token.type != .SemiColon{
@@ -232,7 +233,7 @@ main ::  proc(){
 	using fmt
 	println("UG STUBBER INIT")
 
-
+/*
 	test := "    hello string world"
 	tt : Tokenizer
 	tt.src = test
@@ -251,12 +252,66 @@ main ::  proc(){
 	eat_all_whitespace(&tt,true)
 
 	println(tt.src[tt.offset:])
+*/
+
+
+
 
 	input_gl_h := string(#load("headers_to_stub/gl.h"))
 	input_gl_ext_h := string(#load("headers_to_stub/glext.h"))
+
+
+	out_builder := strings.make_builder_none()
+	strings.write_rune_builder()
+
+	header_data := parse_gl_header(input_gl_h)
 	
-	
-	
+	for b , i  in header_data.header_data_block{
+		for t, j in block.tokens{
+			if j + 1 < len(header_data.header_data_block){
+				next_token = block.tokens[(j+1)]
+			}
+
+			if t.type == .OpenParen{
+				if prev_token.data == "OPENGLES_DEPRECATED"{
+					open_paren_count := 0
+					close_paren_count := 0
+					k := j
+					for {
+						t = block.tokens[k]
+						if t.type == .OpenParen{
+							open_paren_count += 1
+						}else if t.type == CloseParen{
+							close_paren_count += 1
+						}
+
+						if open_paren_count != close_paren_count{
+							k += 1
+						}else{
+							j = token
+							break
+						}
+					}
+					continue
+				}
+
+				//Todo(Ray):add to string output here
+
+
+
+			}else if t.type == .CloseParen{
+				//add string ouptu
+			}else if t.type == .SemiColon{
+				// NOTE(Ray Garner): This is the end of the signature
+                //we throw away the semicolon and add create our braces
+                //and return type here.
+                //Yostr func_stub = CreateStringFromLiteral("\n{\n",&func_sig_temp_arena);
+                //GLStubifyReturnTypes return_type = {};
+                // NOTE(Ray Garner): If its a pointer typee we will always return a null pointer type is equivalent to zero.
+                
+			}
+		}
+	}
 
 
 }
