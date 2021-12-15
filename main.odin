@@ -3,6 +3,24 @@ import fmt "core:fmt"
 import utf8 "core:unicode/utf8"
 import strings "core:strings"
 
+GLStubifyReturnTypes :: enum{
+    gl_returntype_void,
+    gl_returntype_uint,
+    gl_returntype_int,
+    gl_returntype_glbool,
+    gl_returntype_gluint,
+    gl_returntype_glubyte,
+    gl_returntype_glenum,
+    gl_returntype_nullpointer,
+    gl_returntype_glsync,//is a pointer to a struct
+}
+
+GLReturnType :: struct{
+    flags : u32,
+    token : Token,
+    is_pointer : bool,
+}
+
 TokenType :: enum{
 	Identifier,
     Paren,
@@ -174,7 +192,7 @@ GLHeaderData :: struct{
     header_data_block : [dynamic]GLHeaderDataBlock,
 }
 
-parse_gl_header :: proc(input : string){
+parse_gl_header :: proc(input : string) -> GLHeaderData{
 	result : GLHeaderData
 	result.header_data_block  = make([dynamic]GLHeaderDataBlock) 
 	tokenizer_ : Tokenizer
@@ -225,12 +243,52 @@ parse_gl_header :: proc(input : string){
 			}
 		}
 	}
-
+	return result
 }
 
 
+GetReturnString :: proc(type : GLStubifyReturnTypes)-> string
+{
+    result : string
+    switch(type)
+    {
+        case .gl_returntype_void:{
+            result = "\treturn;\n"
+        }
+        case .gl_returntype_uint:{
+            result = "\treturn 0;\n"
+        }
+        case .gl_returntype_int:{
+            result = "\treturn 0;\n"
+        }
+        case .gl_returntype_glbool:{
+            result = "\treturn false;\n"
+        }
+        case .gl_returntype_glubyte:{
+            result = "\treturn 0;\n"
+        }
+        case .gl_returntype_gluint:{
+            result = "\treturn 0;\n"
+        }
+        case .gl_returntype_glenum:{
+            result = "\treturn 0;\n"
+        }
+        case .gl_returntype_nullpointer:{
+            result = "\treturn 0;\n"
+        }
+        case .gl_returntype_glsync:{
+            result = "\treturn 0;\n"
+        }
+        default:{
+        	assert(false)
+        }
+    }
+    return result;
+}
+
 main ::  proc(){
 	using fmt
+	using strings
 	println("UG STUBBER INIT")
 
 /*
@@ -260,13 +318,14 @@ main ::  proc(){
 	input_gl_h := string(#load("headers_to_stub/gl.h"))
 	input_gl_ext_h := string(#load("headers_to_stub/glext.h"))
 
-
-	out_builder := strings.make_builder_none()
-	strings.write_rune_builder()
+	return_type_info : GLReturnType  = {};
+	out_builder_ := make_builder_none()
+	out_builder := &out_builder_
 
 	header_data := parse_gl_header(input_gl_h)
-	
-	for b , i  in header_data.header_data_block{
+	next_token : Token
+	prev_token : Token
+	for block , i  in header_data.header_data_block{
 		for t, j in block.tokens{
 			if j + 1 < len(header_data.header_data_block){
 				next_token = block.tokens[(j+1)]
@@ -278,17 +337,17 @@ main ::  proc(){
 					close_paren_count := 0
 					k := j
 					for {
-						t = block.tokens[k]
-						if t.type == .OpenParen{
+						tt := block.tokens[k]
+						if tt.type == .OpenParen{
 							open_paren_count += 1
-						}else if t.type == CloseParen{
+						}else if tt.type == .CloseParen{
 							close_paren_count += 1
 						}
 
 						if open_paren_count != close_paren_count{
 							k += 1
 						}else{
-							j = token
+							j = k
 							break
 						}
 					}
@@ -296,19 +355,48 @@ main ::  proc(){
 				}
 
 				//Todo(Ray):add to string output here
-
-
+				write_rune_builder(out_builder,'(')
 
 			}else if t.type == .CloseParen{
-				//add string ouptu
+				//add string output
+				write_rune_builder(out_builder,')')
 			}else if t.type == .SemiColon{
 				// NOTE(Ray Garner): This is the end of the signature
                 //we throw away the semicolon and add create our braces
                 //and return type here.
                 //Yostr func_stub = CreateStringFromLiteral("\n{\n",&func_sig_temp_arena);
                 //GLStubifyReturnTypes return_type = {};
+
+                func_stub := "\n{\n"
+				return_type : GLStubifyReturnTypes
+
                 // NOTE(Ray Garner): If its a pointer typee we will always return a null pointer type is equivalent to zero.
-                
+                if return_type_info.is_pointer || "GLsync" == return_type_info.token.data{
+                	return_type = .gl_returntype_void
+                }else{
+                	if "void" == return_type_info.token.data{
+                		return_type = .gl_returntype_void
+                	}else if "GLuint" == return_type_info.token.data{
+                		return_type = .gl_returntype_gluint
+                	}else if return_type_info.token.data == "int"{
+                        return_type = .gl_returntype_int;
+                    }else if return_type_info.token.data == "GLboolean"{
+                        return_type = .gl_returntype_glbool;
+                    }else if return_type_info.token.data == "GLenum"{
+                        return_type = .gl_returntype_glenum;
+                    }else if return_type_info.token.data == "GLubyte"{
+                        return_type = .gl_returntype_glubyte;
+                    }else if return_type_info.token.data == "GLenum"{
+                        return_type = .gl_returntype_glenum;
+                    }
+                }
+                return_statement : string// = AppendString(func_stub,GetReturnString(return_type,&func_sig_temp_arena),&func_sig_temp_arena);
+                //func_stub = AppendString(return_statement,CreateStringFromLiteral("}\n\n",&func_sig_temp_arena),&func_sig_temp_arena);
+				//AppendStringSameFrontArena(gl_h_output,func_stub,sm);
+                //DeAllocatePartition(&func_sig_temp_arena,false);
+                return_type_info.is_pointer = false; 
+                return_type_info.flags = 0;
+                                
 			}
 		}
 	}
