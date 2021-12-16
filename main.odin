@@ -2,6 +2,7 @@ package main
 import fmt "core:fmt"
 import utf8 "core:unicode/utf8"
 import strings "core:strings"
+import os "core:os"
 
 GLStubifyReturnTypes :: enum{
     gl_returntype_void,
@@ -19,6 +20,10 @@ GLReturnType :: struct{
     flags : u32,
     token : Token,
     is_pointer : bool,
+}
+
+GLReturnTypeFlags :: enum{
+    gl_returntype_flag_const = 0x01,
 }
 
 TokenType :: enum{
@@ -132,16 +137,17 @@ eat_all_whitespace :: proc(tokenizer : ^Tokenizer, is_included_end_of_line_chars
 }
 
 get_token :: proc(tokenizer : ^Tokenizer) -> Token{
+	using fmt
 	result : Token
 	eat_all_whitespace(tokenizer,true)
 	r,width := current_rune(tokenizer^)
 	for !is_whitespace(r){
 		switch r{
 			case ';':{result.type = .SemiColon;advance(tokenizer,width);return result;}
-			case '(':{result.type = .OpenBrace;advance(tokenizer,width);return result;}
-			case ')':{result.type = .CloseBrace;advance(tokenizer,width);return result;}
-			case '{':{result.type = .OpenParen;advance(tokenizer,width);return result;}
-			case '}':{result.type = .CloseParen;advance(tokenizer,width);return result;}
+			case '(':{result.type = .OpenParen;advance(tokenizer,width);return result;}
+			case ')':{result.type = .CloseParen;advance(tokenizer,width);return result;}
+			case '{':{result.type = .OpenBrace;advance(tokenizer,width);return result;}
+			case '}':{result.type = .CloseBrace;advance(tokenizer,width);return result;}
 			case ':':{result.type = .Colon;advance(tokenizer,width);return result;}
 			case ',':{result.type = .Comma;advance(tokenizer,width);return result;}
 			case '.':{result.type = .Period;advance(tokenizer,width);return result;}
@@ -156,19 +162,24 @@ get_token :: proc(tokenizer : ^Tokenizer) -> Token{
 			case '"':{
 				result.type = .String
 				r = advance_by_current(tokenizer)
+				start_offset := tokenizer.offset
+				end_offset : int
 				for r != '"'{
+					println(r)
 					r = advance_by_current(tokenizer)
 				}
-				result.data = tokenizer.src[tokenizer.offset:]				
+				result.data = tokenizer.src[start_offset:tokenizer.offset]				
+				advance_by_current(tokenizer)
 				return result
 			}
-			default :{
+			case :{//default
 				result.type = .Identifier
+				start_offset := tokenizer.offset
 				r = advance_by_current(tokenizer)
 				for is_alpha(r) || is_num(r) || is_allowed_in_identifier(r){
 					r = advance_by_current(tokenizer)					
 				}
-				result.data = tokenizer.src[tokenizer.offset:]
+				result.data = tokenizer.src[start_offset:tokenizer.offset]
 				return result
 			}
 		}
@@ -193,6 +204,8 @@ GLHeaderData :: struct{
 }
 
 parse_gl_header :: proc(input : string) -> GLHeaderData{
+	using fmt
+
 	result : GLHeaderData
 	result.header_data_block  = make([dynamic]GLHeaderDataBlock) 
 	tokenizer_ : Tokenizer
@@ -203,9 +216,9 @@ parse_gl_header :: proc(input : string) -> GLHeaderData{
 	tokens : [dynamic]Token = make([dynamic]Token)
 	prev_token : Token
 
-	is_parsing : bool
-	is_function : bool
+	is_parsing : bool = true
 
+	//printf(tokenizer.src)
 	for is_parsing{
 		token := get_token(tokenizer)
 		append(&tokens,token)
@@ -223,18 +236,16 @@ parse_gl_header :: proc(input : string) -> GLHeaderData{
 		}
 
 		if token.type == .Identifier{
-			if token.data == "GL_API" && prev_token.data == "define"{
+			if token.data == "GL_API" && prev_token.data != "define"{
 				block : GLHeaderDataBlock
 				block.type = .glheader_data_func_sig
                 block.tokens = make([dynamic]Token)
                 //beggining of function definition.
-                is_function = true;
                 append(&block.tokens,token)
                 for{
                 	token = get_token(tokenizer)
                 	append(&block.tokens,token)
-                	is_function = false
-					if token.type != .SemiColon{
+					if token.type == .SemiColon{
 						break
 					}
 					prev_token = token
@@ -242,12 +253,20 @@ parse_gl_header :: proc(input : string) -> GLHeaderData{
                 append(&result.header_data_block,block)
 			}
 		}
+
+		if token.type == .EndOfStream{
+			break
+		}else if tokenizer.offset >= len(tokenizer.src){
+			break
+		}
+
+		prev_token = token
 	}
 	return result
 }
 
 
-GetReturnString :: proc(type : GLStubifyReturnTypes)-> string
+get_return_string :: proc(type : GLStubifyReturnTypes)-> string
 {
     result : string
     switch(type)
@@ -279,55 +298,30 @@ GetReturnString :: proc(type : GLStubifyReturnTypes)-> string
         case .gl_returntype_glsync:{
             result = "\treturn 0;\n"
         }
-        default:{
+        case:{
         	assert(false)
         }
     }
     return result;
 }
 
-main ::  proc(){
-	using fmt
+lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
 	using strings
-	println("UG STUBBER INIT")
-
-/*
-	test := "    hello string world"
-	tt : Tokenizer
-	tt.src = test
-
-	println(tt.src[tt.offset:])
-
-	a,w := current_rune(tt)
-	println(a,w)
-	newr := advance_by_current(&tt)
-	a,w = current_rune(tt)
-	println(a,w)
-
-	println(tt.at)
-
-
-	eat_all_whitespace(&tt,true)
-
-	println(tt.src[tt.offset:])
-*/
-
-
-
-
-	input_gl_h := string(#load("headers_to_stub/gl.h"))
-	input_gl_ext_h := string(#load("headers_to_stub/glext.h"))
+	using fmt
 
 	return_type_info : GLReturnType  = {};
-	out_builder_ := make_builder_none()
-	out_builder := &out_builder_
-
 	header_data := parse_gl_header(input_gl_h)
 	next_token : Token
 	prev_token : Token
-	for block , i  in header_data.header_data_block{
-		for t, j in block.tokens{
-			if j + 1 < len(header_data.header_data_block){
+	prev_prev_token : Token
+
+	for  i := 0;i< len(header_data.header_data_block) - 1;i+=1{
+		block := header_data.header_data_block[i]
+
+		for j := 0;j < len(block.tokens);j+=1{
+			t := block.tokens[j]
+
+			if j + 1 < len(block.tokens) - 1{
 				next_token = block.tokens[(j+1)]
 			}
 
@@ -356,10 +350,12 @@ main ::  proc(){
 
 				//Todo(Ray):add to string output here
 				write_rune_builder(out_builder,'(')
+				//printf(to_string(out_builder^))
 
 			}else if t.type == .CloseParen{
 				//add string output
 				write_rune_builder(out_builder,')')
+				//printf(to_string(out_builder^))
 			}else if t.type == .SemiColon{
 				// NOTE(Ray Garner): This is the end of the signature
                 //we throw away the semicolon and add create our braces
@@ -367,7 +363,6 @@ main ::  proc(){
                 //Yostr func_stub = CreateStringFromLiteral("\n{\n",&func_sig_temp_arena);
                 //GLStubifyReturnTypes return_type = {};
 
-                func_stub := "\n{\n"
 				return_type : GLStubifyReturnTypes
 
                 // NOTE(Ray Garner): If its a pointer typee we will always return a null pointer type is equivalent to zero.
@@ -390,16 +385,75 @@ main ::  proc(){
                         return_type = .gl_returntype_glenum;
                     }
                 }
-                return_statement : string// = AppendString(func_stub,GetReturnString(return_type,&func_sig_temp_arena),&func_sig_temp_arena);
-                //func_stub = AppendString(return_statement,CreateStringFromLiteral("}\n\n",&func_sig_temp_arena),&func_sig_temp_arena);
-				//AppendStringSameFrontArena(gl_h_output,func_stub,sm);
-                //DeAllocatePartition(&func_sig_temp_arena,false);
+                
+                func_stub : string = "\n{\n"
+                write_string_builder(out_builder,func_stub)
+                //printf(to_string(out_builder^))
+                write_string_builder(out_builder,get_return_string(return_type))
+                //printf(to_string(out_builder^))
+                write_string_builder(out_builder,"}\n\n")
+                //printf(to_string(out_builder^))
                 return_type_info.is_pointer = false; 
                 return_type_info.flags = 0;
-                                
+			}else if t.type == .Comma{
+				write_rune_builder(out_builder,',')
+				//printf(to_string(out_builder^))
+			}else if t.type == .Asterisk{
+				write_rune_builder(out_builder,'*')
+				//printf(to_string(out_builder^))
+			}else if t.type == .Identifier{
+				if "GL_API" == prev_prev_token.data &&
+					prev_token.data == "const"{
+						return_type_info.token = t
+						return_type_info.flags = u32(GLReturnTypeFlags.gl_returntype_flag_const)
+						if next_token.type == .Asterisk{
+							return_type_info.is_pointer = true
+						}
+				}else if "GL_API" == prev_token.data{
+					if next_token.type == .Asterisk{
+						return_type_info.is_pointer = true
+					}
+					return_type_info.token = t
+				}
+
+				if "OPENGLES_DEPRECATED" != t.data{
+					write_string_builder(out_builder,t.data)
+					//printf(to_string(out_builder^))
+					write_rune_builder(out_builder,' ')
+					//printf(to_string(out_builder^))
+				}
 			}
+			prev_prev_token = prev_token
+			prev_token = t
 		}
+		//printf(to_string(out_builder^))
 	}
+}
+
+main ::  proc(){
+	using fmt
+	using strings
+	println("UG STUBBER INIT")
+
+	input_gl_h := string(#load("headers_to_stub/gl.h"))
+	input_gl_ext_h := string(#load("headers_to_stub/glext.h"))
+
+	out_builder_ := make_builder_none()
+	out_builder := &out_builder_
+
+
+	lex_the_tokens(out_builder,input_gl_h)
+	gl_h_string := to_string(out_builder^)
+	printf(gl_h_string)
+
+
+	os.write_entire_file("gl.h",(transmute([]u8)gl_h_string)[:])
+
+	out_builder_ext := make_builder_none()
+	lex_the_tokens(&out_builder_ext,input_gl_ext_h)
+
+	printf(to_string(out_builder_ext))
+
 
 
 }
