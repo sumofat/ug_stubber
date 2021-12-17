@@ -3,6 +3,7 @@ import fmt "core:fmt"
 import utf8 "core:unicode/utf8"
 import strings "core:strings"
 import os "core:os"
+import tokenizer "tokenizer"
 
 GLStubifyReturnTypes :: enum{
     gl_returntype_void,
@@ -16,176 +17,19 @@ GLStubifyReturnTypes :: enum{
     gl_returntype_glsync,//is a pointer to a struct
 }
 
+GLParam :: struct{
+	type : GLStubifyReturnTypes,
+	name : string,
+}
+
 GLReturnType :: struct{
     flags : u32,
-    token : Token,
+    token : tokenizer.Token,
     is_pointer : bool,
 }
 
 GLReturnTypeFlags :: enum{
     gl_returntype_flag_const = 0x01,
-}
-
-TokenType :: enum{
-	Identifier,
-    Paren,
-    OpenParen,
-    CloseParen,
-    Asterisk,
-    OpenBrace,
-    CloseBrace,
-    LessThanSign,
-    GreaterThanSign,
-    String,
-    SemiColon,
-    Colon,
-    Period,
-    Dash,
-    Underscore,
-    Comma,
-    EndOfStream,
-    Comment,
-    Pound,
-    ReturnCarriage,
-    NewLine,
-	ForwardSlash,
-	BackwardSlash,
-    Pipe,
-    Unknown,
-}
-
-Token :: struct{
-	type : TokenType,
-	data : string,
-}
-
-Tokenizer :: struct{
-	src : string,
-	offset : int,
-	last_token : ^Token,
-	at : rune,
-}
-
-is_whitespace :: proc(r : rune) -> bool{
-	if r == ' '  ||
-       r == '\t' ||
-       r == '\n' ||
-       r == '\r'{
-       	return true
-    }
-    return false
-}
-is_alpha :: proc(r : rune)-> bool{
-	result : bool = ((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'))
-    return result
-}
-
-is_num :: proc(r : rune) -> bool{
-    return (r >= '0' && r <= '9') || (r == '-') || (r == '.')
-}
-
-is_allowed_in_identifier :: proc(r : rune)-> bool{
-    return (r == '_');
-}
-is_whitespace_no_end_of_line :: proc(r : rune) -> bool{
-	if r == ' '  ||
-       r == '\t'{
-       	return true
-    }
-    return false
-}
-
-is_comment_start :: proc(token : Token,other : Token) -> bool{
-    return (token.type == .ForwardSlash && other.type == .Asterisk);
-}
-
-is_comment_end :: proc(token : Token,other : Token) -> bool{
-    return (token.type == .Asterisk && other.type == .ForwardSlash);
-}
-
-current_rune :: proc(tokenizer : Tokenizer) -> (rune,int){
-	return utf8.decode_rune_in_string(tokenizer.src[tokenizer.offset:])
-}
-
-advance :: proc(tokenizer : ^Tokenizer,by : int){
-	tokenizer.offset += by
-	w : int
-	tokenizer.at,w = current_rune(tokenizer^)
-}
-
-advance_by_current :: proc(tokenizer : ^Tokenizer) -> rune{
-	r, w := utf8.decode_rune_in_string(tokenizer.src[tokenizer.offset:])
-	tokenizer.offset += w
-	next_r,next_w := current_rune(tokenizer^)
-	tokenizer.at = next_r
-	return tokenizer.at
-}
-
-eat_all_whitespace :: proc(tokenizer : ^Tokenizer, is_included_end_of_line_chars : bool){
-	if is_included_end_of_line_chars{
-		r := tokenizer.at
-		for is_whitespace(r){
-			r = advance_by_current(tokenizer)
-		}
-	}else{
-		temp_offset := tokenizer.offset
-		r := tokenizer.at
-		for is_whitespace_no_end_of_line(r){
-			r = advance_by_current(tokenizer)
-		}
-	}
-}
-
-get_token :: proc(tokenizer : ^Tokenizer) -> Token{
-	using fmt
-	result : Token
-	eat_all_whitespace(tokenizer,true)
-	r,width := current_rune(tokenizer^)
-	for !is_whitespace(r){
-		switch r{
-			case ';':{result.type = .SemiColon;advance(tokenizer,width);return result;}
-			case '(':{result.type = .OpenParen;advance(tokenizer,width);return result;}
-			case ')':{result.type = .CloseParen;advance(tokenizer,width);return result;}
-			case '{':{result.type = .OpenBrace;advance(tokenizer,width);return result;}
-			case '}':{result.type = .CloseBrace;advance(tokenizer,width);return result;}
-			case ':':{result.type = .Colon;advance(tokenizer,width);return result;}
-			case ',':{result.type = .Comma;advance(tokenizer,width);return result;}
-			case '.':{result.type = .Period;advance(tokenizer,width);return result;}
-			case '-':{result.type = .Dash;advance(tokenizer,width);return result;}
-			case '#':{result.type = .Pound;advance(tokenizer,width);return result;}
-			case '<':{result.type = .LessThanSign;advance(tokenizer,width);return result;}
-			case '>':{result.type = .GreaterThanSign;advance(tokenizer,width);return result;}
-			case '/':{result.type = .ForwardSlash;advance(tokenizer,width);return result;}
-			case '\\':{result.type = .BackwardSlash;advance(tokenizer,width);return result;}
-			case '*':{result.type = .Asterisk;advance(tokenizer,width);return result;}
-			//case '\0':{result.type = .Pipe;advance(tokenizer,width);return result;}
-			case '"':{
-				result.type = .String
-				r = advance_by_current(tokenizer)
-				start_offset := tokenizer.offset
-				end_offset : int
-				for r != '"'{
-					println(r)
-					r = advance_by_current(tokenizer)
-				}
-				result.data = tokenizer.src[start_offset:tokenizer.offset]				
-				advance_by_current(tokenizer)
-				return result
-			}
-			case :{//default
-				result.type = .Identifier
-				start_offset := tokenizer.offset
-				r = advance_by_current(tokenizer)
-				for is_alpha(r) || is_num(r) || is_allowed_in_identifier(r){
-					r = advance_by_current(tokenizer)					
-				}
-				result.data = tokenizer.src[start_offset:tokenizer.offset]
-				return result
-			}
-		}
-	}
-
-	return result
 }
 
 GLHeaderDataBlockType :: enum{
@@ -196,7 +40,7 @@ GLHeaderDataBlockType :: enum{
 
 GLHeaderDataBlock :: struct{
     type : GLHeaderDataBlockType,
-    tokens : [dynamic]Token,
+    tokens : [dynamic]tokenizer.Token,
 }
 
 GLHeaderData :: struct{
@@ -205,6 +49,7 @@ GLHeaderData :: struct{
 
 parse_gl_header :: proc(input : string) -> GLHeaderData{
 	using fmt
+	using tokenizer
 
 	result : GLHeaderData
 	result.header_data_block  = make([dynamic]GLHeaderDataBlock) 
@@ -265,7 +110,6 @@ parse_gl_header :: proc(input : string) -> GLHeaderData{
 	return result
 }
 
-
 get_return_string :: proc(type : GLStubifyReturnTypes)-> string
 {
     result : string
@@ -305,9 +149,59 @@ get_return_string :: proc(type : GLStubifyReturnTypes)-> string
     return result;
 }
 
+get_return_type :: proc(data : string) -> GLStubifyReturnTypes{
+	return_type : GLStubifyReturnTypes
+	if "void" == data{
+		return_type = .gl_returntype_void
+	}else if "GLuint" == data{
+		return_type = .gl_returntype_gluint
+	}else if data == "int"{
+        return_type = .gl_returntype_int;
+    }else if data == "GLboolean"{
+        return_type = .gl_returntype_glbool;
+    }else if data == "GLenum"{
+        return_type = .gl_returntype_glenum;
+    }else if data == "GLubyte"{
+        return_type = .gl_returntype_glubyte;
+    }else if data == "GLenum"{
+        return_type = .gl_returntype_glenum;
+    }
+    return return_type
+}
+
+get_ug_call_sig :: proc(out_builder : ^strings.Builder,types : []GLParam){
+	using strings
+	using fmt
+
+	write_string_builder(out_builder,"unigraph_call_")
+	param_count_string := tprintf("%d",len(types))
+	write_string_builder(out_builder,param_count_string)
+	write_rune_builder(out_builder,'(')
+
+	//write parameters
+	global_func_id := get_id_for_function_call()	
+	write_string_builder(out_builder,global_func_id)
+	write_rune_builder(out_builder,',')
+
+	//write_string_builder(out_builder,file_location)
+//	write_rune_builder(out_builder,',')
+
+	for param in types{
+		write_rune_builder(out_builder,',')
+		global_gl_type_id := int(param.type)///gl_get_global_type_id(param)
+		write_string_builder(out_builder,global_gl_type_id)
+		write_rune_builder(out_builder,',')
+		write_string_builder(out_builder,param.name)
+	}
+	write_rune_builder(out_builder,')')
+	write_rune_builder(out_builder,';')
+
+}
+
 lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
 	using strings
 	using fmt
+	using tokenizer
 
 	return_type_info : GLReturnType  = {};
 	header_data := parse_gl_header(input_gl_h)
@@ -315,9 +209,14 @@ lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
 	prev_token : Token
 	prev_prev_token : Token
 
+	current_param_types : [dynamic]GLParam = make([dynamic]GLParam)
+
 	for  i := 0;i< len(header_data.header_data_block) - 1;i+=1{
 		block := header_data.header_data_block[i]
-
+		is_start_params : bool
+		is_next_param : bool
+		param_count : int
+		param : GLParam
 		for j := 0;j < len(block.tokens);j+=1{
 			t := block.tokens[j]
 
@@ -326,7 +225,9 @@ lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
 			}
 
 			if t.type == .OpenParen{
+				is_deprecated : bool 
 				if prev_token.data == "OPENGLES_DEPRECATED"{
+					is_deprecated = true
 					open_paren_count := 0
 					close_paren_count := 0
 					k := j
@@ -348,8 +249,14 @@ lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
 					continue
 				}
 
+
 				//Todo(Ray):add to string output here
 				write_rune_builder(out_builder,'(')
+				
+				if is_deprecated == false{
+					is_start_params = true
+				}
+
 				//printf(to_string(out_builder^))
 
 			}else if t.type == .CloseParen{
@@ -369,6 +276,9 @@ lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
                 if return_type_info.is_pointer || "GLsync" == return_type_info.token.data{
                 	return_type = .gl_returntype_void
                 }else{
+
+                	return_type = get_return_type(return_type_info.token.data)
+                	/*
                 	if "void" == return_type_info.token.data{
                 		return_type = .gl_returntype_void
                 	}else if "GLuint" == return_type_info.token.data{
@@ -383,12 +293,14 @@ lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
                         return_type = .gl_returntype_glubyte;
                     }else if return_type_info.token.data == "GLenum"{
                         return_type = .gl_returntype_glenum;
-                    }
+                    }*/
                 }
                 
                 func_stub : string = "\n{\n"
                 write_string_builder(out_builder,func_stub)
                 //printf(to_string(out_builder^))
+                write_string_builder(out_builder,get_ug_call_sig(out_builder,current_param_types[:]))
+                write_rune_builder(out_builder,'\n')
                 write_string_builder(out_builder,get_return_string(return_type))
                 //printf(to_string(out_builder^))
                 write_string_builder(out_builder,"}\n\n")
@@ -417,6 +329,15 @@ lex_the_tokens :: proc(out_builder : ^strings.Builder,input_gl_h : string){
 				}
 
 				if "OPENGLES_DEPRECATED" != t.data{
+					if is_start_params {
+						if param_count % 2 == 0{
+							param.type = get_return_type(t.data)
+						}else if param_count % 3 == 0{
+							param.name = t.data
+							append(&current_param_types,param)
+						}
+						
+					}
 					write_string_builder(out_builder,t.data)
 					//printf(to_string(out_builder^))
 					write_rune_builder(out_builder,' ')
@@ -444,7 +365,7 @@ main ::  proc(){
 
 	lex_the_tokens(out_builder,input_gl_h)
 	gl_h_string := to_string(out_builder^)
-	printf(gl_h_string)
+	print(gl_h_string)
 
 
 	os.write_entire_file("gl.h",(transmute([]u8)gl_h_string)[:])
@@ -452,7 +373,7 @@ main ::  proc(){
 	out_builder_ext := make_builder_none()
 	lex_the_tokens(&out_builder_ext,input_gl_ext_h)
 
-	printf(to_string(out_builder_ext))
+	print(to_string(out_builder_ext))
 
 
 
